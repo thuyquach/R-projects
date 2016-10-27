@@ -1,0 +1,226 @@
+---
+title: ""NYC weather impacts on flight delay 2013""
+output: pdf_document
+author: Thuy Quach
+---
+```{r, messages=FALSE}
+# Set up knitr 
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+echo=FALSE, warning=FALSE, message=FALSE)      
+```
+
+
+```{r Setup, message=FALSE}
+# Load standard libraries
+install.packages("tidyverse",
+                 repos = 'http://cran.us.r-project.org')
+library(tidyverse)
+```
+
+
+#### Problem 1: Flight Delays  ####
+
+Flight delays are often linked to weather conditions. How does weather impact flights from NYC? Utilize both the `flights` and `weather` datasets from the `nycflights13` package to explore this question. Include at least two visualizations to aid in communicating what you find.
+
+##### Dataset:
+
+```{r Import dataset}
+# Import the datasets
+library("nycflights13")
+
+#Remove any rows that contain "NA" in "flights", creating "data_flight".
+data_flights<-na.omit(flights)
+data_weather<-na.omit(weather)
+
+```
+
+
+##### Summary of the dataset:
+
+First let's see the total of the flight data and weather data
+```{r Total data}
+length(data_flights$year)
+length(data_weather$year)
+```
+
+Then let's explore the variables and the data structure of the flight data
+
+```{r Flight variables}
+summary(data_flights)
+names(data_flights)
+str(data_flights)
+
+```
+
+There are 16 variables in flight data. There are year (2013), month( 1-12) and day (1-31) and other details about flight information. 
+
+
+Let's explore weather data
+
+```{r Weather variables}
+summary(data_weather)
+names(data_weather)
+str(data_weather)
+```
+
+There are 14 variables in the weather dataset. There are year (2013), month( 1-12) and day (1-31) with other weather data such as temp, wind_speed, precip..ect.
+
+##### Dep_delay vs weather
+Since we are interested in how weather affects flight delay from NYC, here are the variables we should pay attention: dep_delay. 
+
+```{r Important variables}
+summary(data_flights$dep_delay)
+hist(data_flights$dep_delay, breaks=50, main = "Delay Distribution")
+
+```
+
+We see that there are a lot of outliers in the data, for example the maximum of dep_delay was 1301. Let's see that data
+
+```{r Maximum delay}
+data_flights[data_flights$dep_delay==1301,]
+```
+
+It was on Jan 9th, 2013 at 6:41 am. Let's check the weather on that time.
+
+```{r Weather at max delay}
+data_weather[data_weather$month == 1 & data_weather$day == 9 & data_weather$hour == 6,]
+```
+
+Everything looks normal. It is very interesting. So, the delay may or may not becasue of weather.
+
+Let's see upper outer delay (Q3 + 3*IQ) and lower inner delay (Q1 - 1.5IQ)
+
+```{r Outlier Function}
+#lower and upper quantile
+lowerq = quantile(data_flights$dep_delay)[2]
+upperq = quantile(data_flights$dep_delay)[4]
+iqr = upperq - lowerq 
+#identify mild outliers
+extreme.threshold.upper = upperq + (1.5*iqr)
+extreme.threshold.lower = lowerq - (1.5*iqr)
+
+```
+
+```{r Distribution of non_outliers data}
+data_flights_non_outliers <- data_flights[data_flights$dep_delay >= -29 & data_flights$dep_delay<=35,]
+hist(data_flights_non_outliers$dep_delay, main = "Delay Distribution of Outlier-Removed Data")
+```
+
+Keep the outliers for now before remove it. Next, we will try to group the weather data with the flight data
+
+##### Group flight data into month, day, hour
+
+```{r Group data by month day hour}
+sub_flights <- data_flights %>%
+  select(year, month, day, hour, dep_delay) %>%
+  arrange(month, day, hour) %>%
+  group_by(month, day, hour)
+
+```
+
+
+##### Merge weather and flight data
+```{r Merge weather and flight data}
+merged.data <- merge(sub_flights, data_weather, by=c("year", "month", "day", "hour"))
+```
+
+Now the datas are joined. Why there are 327346 data in sub_flights but only 280619 in merged.data. Any missing date in data_weather? Yes, the total obs in weather data is only 7568 while total hours should be 8760 (365 days * 24 hour). 
+
+Let's explore the correlation between dep_delay and other weather conditions. Keep in mind we have some extreme outliers that have no correlations at all with weather. The reason for the outliers could be engine failure, maintainance issues or logistics problems.
+
+##### Correlation between delay and weather data
+
+```{r Correlation with delay}
+cor.delay <- cor(x=merged.data[,7:15], y=merged.data$dep_delay)
+cor.delay
+
+```
+
+The correlation coefficients were very low, mostly around -0.1 to 0.1. To visualize it, I make the below graph.
+```{r Correlation graph}
+# create a dataframe with correlation coefficients results--------
+var <- c(names(merged.data)[7:15])
+cor.coef <- c(cor.delay[1:9])
+df <- data.frame(var,cor.coef)
+
+# correlation graph------------
+cor.plot <- ggplot(df, aes(x = var, y = cor.coef))
+cor.plot + 
+  geom_bar(stat = "identity", color = "blue", fill = "blue") + 
+  ylim(-0.15, 0.15) +    
+  coord_flip() +
+  labs(title = 'Correlation coefficient vs Weather Variable in Flight Delay')
+```
+
+So, dew point, temperature, precipation have the greatest impact on flight delay. Nevertherless, the correlation coefficients were very low and gives very little insights about which factors influence flight delay. It makes sense since the data contains many outliers. Since I am interested in delay, just focus on the dep_delay >0.
+
+```{r Delay}
+#subset the data with delay >0
+merged.data.delay <- merged.data[merged.data$dep_delay>0,]
+#calculate correlation coef
+cor.pos.delay <- cor(x=merged.data.delay[,7:15], y=merged.data.delay$dep_delay)
+cor.pos.delay
+```
+
+The correlations values of the subset are quite similar with the total data . Let's try to see whether the delay is different between months.
+
+##### Average departure delay by month:
+
+```{r Delay by month}
+#group and calculate avg delay by month
+avg_delay_month <- merged.data %>%
+  group_by(month) %>%
+  summarise(avg_delay = mean(dep_delay))
+
+# Visualize the avg delay by month
+avg_delay_by_month <- ggplot(avg_delay_month, aes(x = month, y=avg_delay)) +
+  geom_bar(stat="identity", fill = 'darkgreen') +
+  scale_x_continuous(breaks = 1:12) +
+  labs(title ='Average Delay by Month')
+avg_delay_by_month
+```
+
+There is different of delay by month. Looks like the hottest month June and July have higher delay. December is also has higher delay which might be due to holidays. Let's combine with temperature, dew point and precipitation data.
+
+##### Average tempature vs departure delay by month:
+
+```{r Avg tempature data}
+#group and calculate avg temp by month
+avg_varibles_by_month <- merged.data %>%
+  group_by(month) %>%
+  summarise(avg_temp = mean(temp), avg_delay = mean(dep_delay), avg_dewp = mean(dewp))
+
+avg_delay_vs_temp <- ggplot(avg_varibles_by_month , aes(x = month, y=avg_delay)) +
+  geom_bar(stat="identity", fill = 'darkgreen') +
+  scale_x_continuous(breaks = 1:12) +
+  geom_line(aes(y = avg_temp) ) +
+  labs(title ='Average Delay Varied by Month and Average Temperature')
+
+ avg_delay_vs_temp 
+```
+
+We could see that hot tempature does have impact on flight delays as supported by the above figure and also as in the correlation coefficients analysis. 
+
+##### Average dew point vs departure delay by month:
+
+```{r Dew point vs delay}
+avg_delay_vs_dewp <- ggplot(avg_varibles_by_month , aes(x = month, y=avg_delay)) +
+  geom_bar(stat="identity", fill = 'darkgreen') +
+  scale_x_continuous(breaks = 1:12) +
+  geom_line(aes(y = avg_dewp), color = 'red') +
+  labs(title ='Average Delay Varied by Month and Average Dew point')
+
+ avg_delay_vs_dewp
+```
+
+Dew point on June and July were also higher and correlated with higher departure delay. 
+
+##### Summary:
+
+The flight dataset has 327346 observation with 17 variables. The weather dataset has 7568 observation with 14 variables and some day are missing. 
+
+I explored the dataset and found there are many extreme data in flight data. I then merged the flight data (select dep_delay with other date time variable) with the weather data. The correlation analysis of merged data showed that tempature and dew point have highest impact on depature delay, though the correlation coeffcients were relatively low around 0.1. 
+
+I then grouped the data by month and calculate the mean temperature and mean dew point. The visualizations of the data showed that on the hottest and most humidity month June and July, the delay were more likely to happen.
+
+
